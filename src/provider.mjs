@@ -1,0 +1,92 @@
+import { AntigravityClient } from './acp.mjs';
+import { selectModel } from './catalog.mjs';
+
+function textOf(message) {
+  if (typeof message.content === 'string') return message.content;
+  return (message.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n');
+}
+function signature(message) { return JSON.stringify([message.role, textOf(message)]); }
+export class RuntimeProvider {
+  constructor({ createStream, connection, onPermission, onActivity = (_update, _key) => {} }) {
+    this.createStream = createStream; this.connection = connection;
+    this.onPermission = onPermission; this.onActivity = onActivity; this.sessions = new Map();
+  }
+  close() { for (const state of this.sessions.values()) state.client.close(); this.sessions.clear(); }
+  stream(model, context, options = {}) {
+    const stream = this.createStream();
+    const output = { role: 'assistant', content: [{ type: 'text', text: '' }], api: model.api, provider: model.provider, model: model.id,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+      stopReason: 'pending', timestamp: Date.now() };
+    void (async () => {
+      let state; let acquired = false; let abort;
+      try {
+        if (options.signal?.aborted) throw new Error('Cancelled before start');
+        const key = options.sessionId || 'interactive';
+        state = this.sessions.get(key);
+        const messages = context.messages.filter(m => m.role === 'user' || m.role === 'assistant');
+        if (messages.some(m => Array.isArray(m.content) && m.content.some(c => c.type === 'image'))) throw new Error('This bridge version supports text only');
+        if (state?.locked) throw new Error('Concurrent prompt for the same ACP session');
+        const changed = state && state.prefix.some((s, i) => s !== signature(messages[i] || {}));
+        if (state?.client.rpc.closed || changed) { state.client.close(); this.sessions.delete(key); state = undefined; }
+        if (!state) {
+          if (this.sessions.size >= 16) throw new Error('Runtime session limit reached; start a new Pi session');
+          const client = new AntigravityClient({ ...this.connection(), onPermission: this.onPermission });
+          state = { client, prefix: [], locked: false, initialized: false };
+          this.sessions.set(key, state);
+        }
+        state.locked = true; acquired = true;
+        const client = state.client;
+        abort = () => { if (client.busy) client.cancel(); else client.close(); };
+        options.signal?.addEventListener('abort', abort, { once: true });
+        if (options.signal?.aborted) { abort(); throw new Error('Cancelled before initialization'); }
+        if (!state.initialized) { await client.initialize(); await client.open(); state.initialized = messages.length === 0 ? false : true; }
+        await selectModel(client, model.id);
+        const fresh = state.prefix.length === 0;
+        const delta = messages.slice(state.prefix.length).filter(m => !(m.role === 'assistant' && m.provider === model.provider));
+        let prompt = delta.map(m => `${m.role === 'user' ? 'USER' : 'ASSISTANT'}:\n${textOf(m)}`).join('\n\n');
+        if (fresh) {
+          const system = context.systemPrompt || context.messages.filter(m => m.role === 'system').map(textOf).join('\n');
+          prompt = (system ? `Host instructions (use only your runtime's available tools):\n${system}\n\n` : '') + prompt;
+        }
+        if (!prompt.trim()) throw new Error('No new text to send');
+        const original = { sessionId: client.sessionId, prompt: [{ type: 'text', text: prompt }] };
+        const replacement = await options.onPayload?.(original, model);
+        const payload = replacement ?? original;
+        if (payload.sessionId !== client.sessionId || !Array.isArray(payload.prompt) || payload.prompt.some(p => p.type !== 'text')) throw new Error('Unsupported payload override');
+        prompt = payload.prompt.map(p => p.text).join('\n');
+        stream.push({ type: 'start', partial: output });
+        stream.push({ type: 'text_start', contentIndex: 0, partial: output });
+        let callbackError;
+        client.onUpdate = update => {
+          try {
+            options.onProviderStreamEvent?.(update, model);
+            if (update.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') {
+              output.content[0].text += update.content.text;
+              stream.push({ type: 'text_delta', contentIndex: 0, delta: update.content.text, partial: output });
+            } else if (update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update' || update.sessionUpdate === 'plan') {
+              this.onActivity(update, key);
+            }
+          } catch (error) { callbackError = error; client.close(); }
+        };
+        const result = await client.prompt(prompt);
+        if (callbackError) throw callbackError;
+        if (options.signal?.aborted || result.stopReason === 'cancelled') throw new Error('Antigravity turn cancelled');
+        state.prefix = messages.map(signature);
+        output.stopReason = result.stopReason === 'max_tokens' ? 'length' : 'stop';
+        stream.push({ type: 'text_end', contentIndex: 0, content: output.content[0].text, partial: output });
+        stream.push({ type: 'done', reason: output.stopReason, message: output });
+      } catch (error) {
+        // An uncertain turn must never be silently resent into the same runtime session.
+        if (acquired) state?.client.close();
+        output.stopReason = options.signal?.aborted ? 'aborted' : 'error';
+        output.errorMessage = error.message;
+        stream.push({ type: 'error', reason: output.stopReason, error: output });
+      } finally {
+        if (abort) options.signal?.removeEventListener('abort', abort);
+        if (acquired) state.locked = false;
+        stream.end();
+      }
+    })();
+    return stream;
+  }
+}
