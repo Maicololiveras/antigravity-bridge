@@ -9,5 +9,7 @@ export function usageSnapshot(update) {
 export function metricLine(m, now = Date.now()) {
   const elapsed = m.finishedAt ? m.finishedAt - m.startedAt : now - m.startedAt;
   const wait = (m.permissionMs || 0) + (m.waitingAt ? now - m.waitingAt : 0);
-  return `${m.worker} · ${m.model} · esfuerzo ${m.effort ?? 'N/D'} · ${m.status} · ${(Math.max(0, elapsed) / 1000).toFixed(1)}s (permisos ${(wait / 1000).toFixed(1)}s) · contexto ${m.contextUsed ?? 'N/D'}/${m.contextSize ?? 'N/D'} · costo sesión ${m.sessionCost === undefined ? 'N/D' : `${m.currency} ${m.sessionCost}`} · usage ACP ${m.reportedUsage ? JSON.stringify(m.reportedUsage) : 'N/D'}`;
+  const context = m.contextUsed !== undefined && m.contextSize > 0
+    ? `${m.contextUsed}/${m.contextSize} (${(100 * m.contextUsed / m.contextSize).toFixed(1)}%)` : 'N/D';
+  return `${m.model} · ${m.effort ?? 'esfuerzo N/D'} · ${m.status} · ${(Math.max(0, elapsed) / 1000).toFixed(1)}s · espera permisos ${(wait / 1000).toFixed(1)}s · contexto ${context} · costo sesión ${m.sessionCost === undefined ? 'N/D' : `${m.currency} ${m.sessionCost}`}`;
 }

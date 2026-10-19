@@ -34,6 +34,7 @@ export default function (pi: ExtensionAPI) {
     if ((metrics.get(m.id)?.revision || 0) >= m.revision) return;
     metrics.set(m.id, m);
     if (metrics.size > 64) metrics.delete(metrics.keys().next().value);
+    if (m.finishedAt) pi.appendEntry?.('antigravity-metrics', m);
     renderMetrics();
   }
   async function permission(request: any, signal?: AbortSignal) {
@@ -65,13 +66,13 @@ export default function (pi: ExtensionAPI) {
     handler: async (args, context) => {
       ctx = context;
       try {
-        if (args.trim() === 'usage') { showMetrics = !showMetrics; if (!showMetrics) ctx.ui.setWidget('antigravity-metrics', undefined); renderMetrics(); ctx.ui.notify(metrics.size ? [...metrics.values()].map(m => clean(metricLine(m))).join('\n') : 'Sin métricas en esta sesión. N/D significa no reportado por ACP.', 'info'); return; }
+        if (args.trim() === 'usage') { showMetrics = !showMetrics; if (!showMetrics) ctx.ui.setWidget('antigravity-metrics', undefined); renderMetrics(); if (!metrics.size) ctx.ui.notify('Sin métricas locales. Las tareas de workers tienen su propia sesión. N/D significa no reportado por ACP.', 'info'); return; }
         if (!ctx.isIdle()) throw new Error('Espera a que termine el turno o cancélalo con Esc');
         if (args.trim().startsWith('inspect')) {
           const client = await adminClient(); await client.open();
           const id = args.trim().slice('inspect'.length).trim();
           if (id) await selectModel(client, id);
-          ctx.ui.notify(JSON.stringify({ bridge: '0.4.0', agent: client.info.agentInfo,
+          ctx.ui.notify(JSON.stringify({ bridge: '0.4.1', agent: client.info.agentInfo,
             configOptions: (client.session.configOptions || []).filter((o: any) => ['model','thought_level'].includes(o.category)).map((o: any) => ({id:o.id,category:o.category,currentValue:o.currentValue,options:o.options})),
             usage: 'Ejecuta una petición directa y /ag usage para ver datos reportados.' }, null, 2), 'info'); return;
         }
@@ -86,8 +87,10 @@ export default function (pi: ExtensionAPI) {
           if (method) await client.authenticate(method.id);
           return;
         }
-        if (args.trim() === 'models') {
+        if (/^models(?:\s|$)/.test(args.trim())) {
           const client = await adminClient(); await client.open();
+          const selected = args.trim().slice('models'.length).trim();
+          if (selected) await selectModel(client, selected);
           entries = modelOptions(client.session);
           mkdirSync(root, { recursive: true });
           const temp = `${cache}.${process.pid}.tmp`;
@@ -101,7 +104,12 @@ export default function (pi: ExtensionAPI) {
     }
   });
   pi.on('session_start', async (_event, context) => {
-    provider.close(); admin?.close(); admin = undefined; ctx = context;
+    provider.close(); admin?.close(); admin = undefined; ctx = context; metrics.clear();
+    for (const entry of ctx.sessionManager?.getEntries?.() || []) {
+      if (entry.type === 'custom' && entry.customType === 'antigravity-metrics' && entry.data?.id) metrics.set(entry.data.id, entry.data);
+    }
+    while (metrics.size > 64) metrics.delete(metrics.keys().next().value);
+    renderMetrics();
     if (ctx.hasUI && !child && !refresh) { refresh = setInterval(renderMetrics, 1000); refresh.unref(); }
   });
   pi.on('before_agent_start', (_event, context) => { ctx = context; });

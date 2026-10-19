@@ -2,7 +2,7 @@
 
 Cliente experimental de Antigravity ACP para Pi y el selector de modelos de Gentle Shell.
 
-**Estado: 0.4.0 experimental. El usuario comprobó login/modelos y permisos interactivos en Windows. Los permisos RPC y métricas se prueban con ACP simulado; falta validar el flujo completo con Gentle y Antigravity reales.**
+**Estado: 0.4.1 experimental. El usuario comprobó login/modelos y permisos interactivos en Windows. Los permisos RPC y métricas se prueban con ACP simulado; falta validar el flujo completo con Gentle y Antigravity reales.**
 
 El proveedor `antigravity` publica los modelos que anuncia el runtime. Pi muestra la respuesta en streaming; Antigravity mantiene su conversación y ejecuta sus propias herramientas. El bridge no extrae tokens, no implementa OAuth de Google, no llama endpoints privados y no invoca `agy -p`.
 
@@ -162,3 +162,9 @@ Se comprueban las rutas y se excluyen enlaces simbólicos/junctions, rutas ambig
 El esfuerzo solicitado por Pi (`options.reasoning`) se envía a `session/set_config_option` únicamente si el runtime anuncia `thought_level` y el valor exacto. El bridge exige confirmación y entrega `providerThinkingLevel` en el mensaje Pi. Sin anuncio no inventa niveles; un esfuerzo explícito incompatible falla con diagnóstico. El catálogo marca reasoning solo para el modelo activo cuya configuración se observó; refresca `/ag models`. Gentle puede mostrar el esfuerzo configurado del perfil en la tarjeta y usar el reportado en sus observaciones, según versión.
 
 `/ag inspect gemini-4-argon` consulta modelo/configuración del ACP instalado sin inferencia. Para diagnosticar uso, selecciona Antigravity en el chat principal, envía una petición corta y ejecuta `/ag usage`: se muestran los campos numéricos de PromptResponse.usage si existen, sin prompts ni credenciales. Este campo experimental tiene semántica ambigua por turno/acumulada según runtime; todavía no se transforma automáticamente a tokens facturados de Pi. Se necesita evidencia real del servidor antes de habilitar esa conversión. La duración nativa la mide Gentle; el costo USD por turno ya usa diferencias del acumulado.
+
+## Datos disponibles (0.4.1)
+
+Validado por captura del usuario: Argon reporta esfuerzo high, contexto usado/capacidad y no entrega usage de tokens ni costo en esa ejecución. El panel ahora muestra porcentaje de contexto, duración y espera sin identificadores largos ni salida duplicada. Métricas finalizadas quedan como entradas custom de Pi, fuera del prompt, en la sesión que las generó; /ag usage las recupera al reabrir esa sesión. No agrega métricas de workers al panel del padre ni cambia las tarjetas de Gentle: estas reciben modelo/esfuerzo y costo si existe por el contrato nativo.
+
+`/ag models gemini-4-argon` consulta ese modelo antes de guardar el catálogo, para registrar su soporte de esfuerzo observado. No se fija artificialmente high para todos los modelos. Tokens consumidos y costo desconocidos permanecen sin medición.
