@@ -40,7 +40,26 @@ export default function (pi: ExtensionAPI) {
   async function permission(request: any, signal?: AbortSignal) {
     return requestPermission(ctx, request, signal);
   }
-  function reportMetric(m: any) { receiveMetric(m); }
+  function saveCatalog() {
+    mkdirSync(root, { recursive: true });
+    const temp = `${cache}.${process.pid}.tmp`;
+    writeFileSync(temp, JSON.stringify(entries, null, 2), { mode: 0o600 }); renameSync(temp, cache);
+  }
+  function reportMetric(m: any) {
+    receiveMetric(m);
+    if (!Number.isSafeInteger(m.contextSize) || m.contextSize <= 0) return;
+    const entry = entries.find(e => e.id === m.model);
+    if (entry && entry.contextWindow !== m.contextSize) {
+      entry.contextWindow = m.contextSize;
+      register();
+      // Cache persistence must not interrupt an otherwise successful runtime turn.
+      try { saveCatalog(); } catch {}
+    }
+    if (ctx?.model?.provider === 'antigravity' && ctx.model.id === m.model) {
+      ctx.model.contextWindow = m.contextSize;
+      ctx.ui.setStatus('antigravity-context', `ACP contexto: ${m.contextUsed}/${m.contextSize} (${(100 * m.contextUsed / m.contextSize).toFixed(1)}%)`);
+    }
+  }
   const provider = new RuntimeProvider({ createStream: createAssistantMessageEventStream, connection, onPermission: permission, onMetrics: reportMetric,
     onActivity: (update: any) => {
       if (update.sessionUpdate === 'plan') ctx?.ui.setWidget('antigravity-plan', (update.entries || []).map((e: any) => `${clean(e.status)} · ${clean(e.content)}`));
@@ -72,11 +91,11 @@ export default function (pi: ExtensionAPI) {
           const client = await adminClient(); await client.open();
           const id = args.trim().slice('inspect'.length).trim();
           if (id) await selectModel(client, id);
-          ctx.ui.notify(JSON.stringify({ bridge: '0.4.1', agent: client.info.agentInfo,
+          ctx.ui.notify(JSON.stringify({ bridge: '0.4.2', agent: client.info.agentInfo,
             configOptions: (client.session.configOptions || []).filter((o: any) => ['model','thought_level'].includes(o.category)).map((o: any) => ({id:o.id,category:o.category,currentValue:o.currentValue,options:o.options})),
             usage: 'Ejecuta una petición directa y /ag usage para ver datos reportados.' }, null, 2), 'info'); return;
         }
-        if (args.trim() === 'reset') { provider.close(); admin?.close(); admin = undefined; ctx.ui.notify('Sesiones del bridge cerradas.', 'info'); return; }
+        if (args.trim() === 'reset') { ctx.ui.setStatus('antigravity-context', undefined); provider.close(); admin?.close(); admin = undefined; ctx.ui.notify('Sesiones del bridge cerradas.', 'info'); return; }
         if (args.trim() === 'auth') {
           const client = await adminClient(); const methods = client.info.authMethods || [];
           if (!methods.length) { ctx.ui.notify('Inicia sesión en la aplicación oficial; ACP no anunció métodos de login.', 'info'); return; }
@@ -91,10 +110,9 @@ export default function (pi: ExtensionAPI) {
           const client = await adminClient(); await client.open();
           const selected = args.trim().slice('models'.length).trim();
           if (selected) await selectModel(client, selected);
-          entries = modelOptions(client.session);
-          mkdirSync(root, { recursive: true });
-          const temp = `${cache}.${process.pid}.tmp`;
-          writeFileSync(temp, JSON.stringify(entries, null, 2), { mode: 0o600 }); renameSync(temp, cache);
+          entries = modelOptions(client.session).map((entry: any) => ({ ...entry,
+            contextWindow: entries.find(saved => saved.id === entry.id)?.contextWindow }));
+          saveCatalog();
           register();
           ctx.ui.notify(`${entries.length} modelos anunciados por ACP. Abre /model o /gentle:models.`, 'info');
           return;
@@ -104,7 +122,7 @@ export default function (pi: ExtensionAPI) {
     }
   });
   pi.on('session_start', async (_event, context) => {
-    provider.close(); admin?.close(); admin = undefined; ctx = context; metrics.clear();
+    provider.close(); admin?.close(); admin = undefined; ctx = context; metrics.clear(); ctx.ui.setStatus('antigravity-context', undefined);
     for (const entry of ctx.sessionManager?.getEntries?.() || []) {
       if (entry.type === 'custom' && entry.customType === 'antigravity-metrics' && entry.data?.id) metrics.set(entry.data.id, entry.data);
     }
@@ -112,9 +130,10 @@ export default function (pi: ExtensionAPI) {
     renderMetrics();
     if (ctx.hasUI && !child && !refresh) { refresh = setInterval(renderMetrics, 1000); refresh.unref(); }
   });
-  pi.on('before_agent_start', (_event, context) => { ctx = context; });
+  pi.on('before_agent_start', (_event, context) => { ctx = context; ctx.ui.setStatus('antigravity-context', undefined); });
+  pi.on('model_select', () => ctx?.ui.setStatus('antigravity-context', undefined));
   pi.on('agent_end', () => { ctx?.ui.setWidget('antigravity-plan', undefined); ctx?.ui.setStatus('antigravity-bridge', undefined); });
-  pi.on('session_tree', () => provider.close());
+  pi.on('session_tree', () => { provider.close(); ctx?.ui.setStatus('antigravity-context', undefined); });
   pi.on('session_shutdown', () => {
     provider.close(); admin?.close(); clearInterval(refresh);
   });

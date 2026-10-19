@@ -74,7 +74,7 @@ export class RuntimeProvider {
         client.onUpdate = update => {
           try {
             options.onProviderStreamEvent?.(update, model);
-            if (update.sessionUpdate === 'usage_update') { Object.assign(metric, usageSnapshot(update)); report(); }
+            if (update.sessionUpdate === 'usage_update') { Object.assign(metric, usageSnapshot(update)); if (metric.contextSize > 0) model.contextWindow = metric.contextSize; report(); }
             if (update.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') {
               output.content[0].text += update.content.text;
               stream.push({ type: 'text_delta', contentIndex: 0, delta: update.content.text, partial: output });

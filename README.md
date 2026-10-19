@@ -2,7 +2,7 @@
 
 Cliente experimental de Antigravity ACP para Pi y el selector de modelos de Gentle Shell.
 
-**Estado: 0.4.1 experimental. El usuario comprobó login/modelos y permisos interactivos en Windows. Los permisos RPC y métricas se prueban con ACP simulado; falta validar el flujo completo con Gentle y Antigravity reales.**
+**Estado: 0.4.2 experimental. El usuario comprobó login/modelos y permisos interactivos en Windows. Los permisos RPC y métricas se prueban con ACP simulado; falta validar el flujo completo con Gentle y Antigravity reales.**
 
 El proveedor `antigravity` publica los modelos que anuncia el runtime. Pi muestra la respuesta en streaming; Antigravity mantiene su conversación y ejecuta sus propias herramientas. El bridge no extrae tokens, no implementa OAuth de Google, no llama endpoints privados y no invoca `agy -p`.
 
@@ -85,7 +85,8 @@ Cada sesión de Pi mantiene su runtime. Los turnos siguientes envían solamente 
 - Solo texto. No hay soporte de imágenes ni audio ni selección de variantes no anunciadas.
 - La UI muestra texto en streaming, estado de herramientas y plan. No hay tarjetas nativas con diffs de Pi.
 - Autenticación real, disponibilidad por sistema operativo, consumo de suscripción y compatibilidad de la versión instalada de ACP requieren validación en el equipo del usuario.
-- ACP no entrega límites de tokens estandarizados: 32768/8192 son presupuestos del adaptador exigidos por el catálogo de Pi, **no especificaciones del modelo ni límites impuestos al runtime**.
+- La ventana de contexto empieza como desconocida (0), y se actualiza/cachea por modelo con `usage_update.size`. Ya no se anuncia el presupuesto ficticio de 32768. `maxTokens: 8192` sigue siendo un presupuesto del adaptador, no un límite impuesto al runtime.
+- El porcentaje nativo de Gentle sigue estimando el historial de Pi. El estado `ACP contexto: usados/capacidad (%)` muestra la ocupación real anunciada por Antigravity para el turno actual; `/ag usage` conserva el diagnóstico. No se sustituyen tokens de consumo por tokens de contexto. Al cambiar modelo o iniciar un turno se retira el estado anterior hasta recibir un reporte nuevo.
 - Los tokens nativos permanecen en cero como compatibilidad de API cuando no hay consumo por turno verificable. El costo nativo recibe la diferencia USD entre totales ACP conocidos, sin sumar el acumulado varias veces. `/ag usage` muestra contexto y costo acumulado reportados mediante ACP `usage_update`; lo ausente aparece N/D. No se convierte contexto ocupado en tokens consumidos ni se estima el precio de una suscripción.
 - Historial ACP en memoria durante la ejecución. Después de reiniciar se crea una sesión y se reenvía el historial textual disponible, lo que puede consumir contexto. No se recuperan automáticamente sesiones por ID del disco.
 - Sin servidor de archivos ni terminal delegado al cliente: no se anuncian capacidades ACP que no se implementan. El agente debe ejecutar sus herramientas por sí mismo.
@@ -163,7 +164,7 @@ El esfuerzo solicitado por Pi (`options.reasoning`) se envía a `session/set_con
 
 `/ag inspect gemini-4-argon` consulta modelo/configuración del ACP instalado sin inferencia. Para diagnosticar uso, selecciona Antigravity en el chat principal, envía una petición corta y ejecuta `/ag usage`: se muestran los campos numéricos de PromptResponse.usage si existen, sin prompts ni credenciales. Este campo experimental tiene semántica ambigua por turno/acumulada según runtime; todavía no se transforma automáticamente a tokens facturados de Pi. Se necesita evidencia real del servidor antes de habilitar esa conversión. La duración nativa la mide Gentle; el costo USD por turno ya usa diferencias del acumulado.
 
-## Datos disponibles (0.4.1)
+## Datos disponibles (0.4.2)
 
 Validado por captura del usuario: Argon reporta esfuerzo high, contexto usado/capacidad y no entrega usage de tokens ni costo en esa ejecución. El panel ahora muestra porcentaje de contexto, duración y espera sin identificadores largos ni salida duplicada. Métricas finalizadas quedan como entradas custom de Pi, fuera del prompt, en la sesión que las generó; /ag usage las recupera al reabrir esa sesión. No agrega métricas de workers al panel del padre ni cambia las tarjetas de Gentle: estas reciben modelo/esfuerzo y costo si existe por el contrato nativo.
 

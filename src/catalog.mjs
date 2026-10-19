@@ -14,9 +14,9 @@ export async function selectModel(client, id) {
   }
 }
 export function piModels(entries) {
-  // ACP does not standardize token limits. These are explicit adapter budgets, not model specifications.
-  return entries.map(({ id, name, reasoning }) => ({ id, name: `${name} · Antigravity`, reasoning: !!reasoning, input: ['text'],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 32768, maxTokens: 8192 }));
+  // A zero window means unknown to Pi; learn capacity only from ACP usage_update.
+  return entries.map(({ id, name, reasoning, contextWindow }) => ({ id, name: `${name} · Antigravity`, reasoning: !!reasoning, input: ['text'],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: Number.isSafeInteger(contextWindow) && contextWindow > 0 ? contextWindow : 0, maxTokens: 8192 }));
 }
 
 export function thoughtOption(session = {}) {

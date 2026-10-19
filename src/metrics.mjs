@@ -2,7 +2,7 @@ const valid = n => typeof n === 'number' && Number.isFinite(n) && n >= 0;
 export function usageSnapshot(update) {
   if (update?.sessionUpdate !== 'usage_update') return {};
   return {
-    ...(valid(update.used) && valid(update.size) ? { contextUsed: update.used, contextSize: update.size } : {}),
+    ...(Number.isSafeInteger(update.used) && update.used >= 0 && Number.isSafeInteger(update.size) && update.size > 0 ? { contextUsed: update.used, contextSize: update.size } : {}),
     ...(valid(update.cost?.amount) && /^[A-Z]{3}$/.test(update.cost?.currency) ? { sessionCost: update.cost.amount, currency: update.cost.currency } : {})
   };
 }
