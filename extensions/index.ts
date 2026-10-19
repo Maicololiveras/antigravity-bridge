@@ -6,7 +6,7 @@ import { readFileSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { AntigravityClient } from '../src/acp.mjs';
-import { modelOptions, piModels } from '../src/catalog.mjs';
+import { modelOptions, piModels, selectModel } from '../src/catalog.mjs';
 import { RuntimeProvider } from '../src/provider.mjs';
 
 export default function (pi: ExtensionAPI) {
@@ -61,12 +61,20 @@ export default function (pi: ExtensionAPI) {
     try { await admin.initialize(); return admin; } catch (error) { admin.close(); admin = undefined; throw error; }
   }
   pi.registerCommand('ag', {
-    description: 'Antigravity: auth, models, status, usage, reset',
+    description: 'Antigravity: auth, models, status, usage, inspect, reset',
     handler: async (args, context) => {
       ctx = context;
       try {
         if (args.trim() === 'usage') { showMetrics = !showMetrics; if (!showMetrics) ctx.ui.setWidget('antigravity-metrics', undefined); renderMetrics(); ctx.ui.notify(metrics.size ? [...metrics.values()].map(m => clean(metricLine(m))).join('\n') : 'Sin métricas en esta sesión. N/D significa no reportado por ACP.', 'info'); return; }
         if (!ctx.isIdle()) throw new Error('Espera a que termine el turno o cancélalo con Esc');
+        if (args.trim().startsWith('inspect')) {
+          const client = await adminClient(); await client.open();
+          const id = args.trim().slice('inspect'.length).trim();
+          if (id) await selectModel(client, id);
+          ctx.ui.notify(JSON.stringify({ bridge: '0.4.0', agent: client.info.agentInfo,
+            configOptions: (client.session.configOptions || []).filter((o: any) => ['model','thought_level'].includes(o.category)).map((o: any) => ({id:o.id,category:o.category,currentValue:o.currentValue,options:o.options})),
+            usage: 'Ejecuta una petición directa y /ag usage para ver datos reportados.' }, null, 2), 'info'); return;
+        }
         if (args.trim() === 'reset') { provider.close(); admin?.close(); admin = undefined; ctx.ui.notify('Sesiones del bridge cerradas.', 'info'); return; }
         if (args.trim() === 'auth') {
           const client = await adminClient(); const methods = client.info.authMethods || [];

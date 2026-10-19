@@ -2,7 +2,7 @@
 
 Cliente experimental de Antigravity ACP para Pi y el selector de modelos de Gentle Shell.
 
-**Estado: 0.3.0 experimental. El usuario comprobó login/modelos y permisos interactivos en Windows. Los permisos RPC y métricas se prueban con ACP simulado; falta validar el flujo completo con Gentle y Antigravity reales.**
+**Estado: 0.4.0 experimental. El usuario comprobó login/modelos y permisos interactivos en Windows. Los permisos RPC y métricas se prueban con ACP simulado; falta validar el flujo completo con Gentle y Antigravity reales.**
 
 El proveedor `antigravity` publica los modelos que anuncia el runtime. Pi muestra la respuesta en streaming; Antigravity mantiene su conversación y ejecuta sus propias herramientas. El bridge no extrae tokens, no implementa OAuth de Google, no llama endpoints privados y no invoca `agy -p`.
 
@@ -82,7 +82,7 @@ Cada sesión de Pi mantiene su runtime. Los turnos siguientes envían solamente 
 ## Límites de esta versión
 
 - Antigravity ejecuta sus herramientas. **Las herramientas y delegaciones propias de Pi/Gentle no se exportan al runtime en esta versión.** Elegir el modelo no garantiza que Antigravity pueda ejecutar una herramienta exclusiva de Gentle.
-- Solo texto. No hay soporte de imágenes, esfuerzo `/thinking`, audio ni selección de variantes no anunciadas.
+- Solo texto. No hay soporte de imágenes ni audio ni selección de variantes no anunciadas.
 - La UI muestra texto en streaming, estado de herramientas y plan. No hay tarjetas nativas con diffs de Pi.
 - Autenticación real, disponibilidad por sistema operativo, consumo de suscripción y compatibilidad de la versión instalada de ACP requieren validación en el equipo del usuario.
 - ACP no entrega límites de tokens estandarizados: 32768/8192 son presupuestos del adaptador exigidos por el catálogo de Pi, **no especificaciones del modelo ni límites impuestos al runtime**.
@@ -156,3 +156,9 @@ Prueba después de actualizar: con un padre de otro proveedor y worker Antigravi
 El aviso inicial muestra operación, archivo, carpeta y modelo. El JSON/código solo aparece al elegir **Ver detalles** (vista limitada a 8000 caracteres). Para `create_file` y `edit_file` con `TargetFile` absoluto verificable se ofrece **Permitir crear y editar en esta carpeta durante esta tarea**, seguido de confirmación de la ruta exacta. Se incluyen subcarpetas. La decisión dura un turno ACP del worker y se elimina al terminar, cancelar o cerrar; no se comparte con otros workers o turnos. Las siguientes creaciones/ediciones reconocidas en esa carpeta se autorizan sin volver a preguntar. Comandos, borrados, otras carpetas y formatos desconocidos siguen preguntando.
 
 Se comprueban las rutas y se excluyen enlaces simbólicos/junctions, rutas ambiguas y ubicaciones contradictorias. No constituye un sandbox del sistema operativo ni cubre herramientas que Antigravity ejecute sin pedir permiso. Gentle conserva su transporte RPC y política task/background. Actualiza y reinicia Gentle para cargar esta versión; un worker ya iniciado sigue con su código anterior.
+
+## Información nativa del worker (0.4.0)
+
+El esfuerzo solicitado por Pi (`options.reasoning`) se envía a `session/set_config_option` únicamente si el runtime anuncia `thought_level` y el valor exacto. El bridge exige confirmación y entrega `providerThinkingLevel` en el mensaje Pi. Sin anuncio no inventa niveles; un esfuerzo explícito incompatible falla con diagnóstico. El catálogo marca reasoning solo para el modelo activo cuya configuración se observó; refresca `/ag models`. Gentle puede mostrar el esfuerzo configurado del perfil en la tarjeta y usar el reportado en sus observaciones, según versión.
+
+`/ag inspect gemini-4-argon` consulta modelo/configuración del ACP instalado sin inferencia. Para diagnosticar uso, selecciona Antigravity en el chat principal, envía una petición corta y ejecuta `/ag usage`: se muestran los campos numéricos de PromptResponse.usage si existen, sin prompts ni credenciales. Este campo experimental tiene semántica ambigua por turno/acumulada según runtime; todavía no se transforma automáticamente a tokens facturados de Pi. Se necesita evidencia real del servidor antes de habilitar esa conversión. La duración nativa la mide Gentle; el costo USD por turno ya usa diferencias del acumulado.

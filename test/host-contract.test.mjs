@@ -51,3 +51,16 @@ test('folder approval is scoped to one prompt and excludes commands and other fo
   assert.equal(await requestPermission(ctx,req(join(root,'project','link','d.txt')),c.signal),'no');
   c.abort(); assert.equal(await requestPermission(ctx,req(join(root,'project','e.txt')),c.signal),null);
 });
+
+test('effort is applied only when advertised and confirmed by runtime', async () => {
+  const {selectThought,piModels,modelOptions}=await import('../src/catalog.mjs');
+  const opt={id:'thinking',type:'select',category:'thought_level',currentValue:'low',options:[{value:'low'},{value:'high'}]};
+  const c={sessionId:'s',session:{configOptions:[opt]},rpc:{request:async(method,p)=>({configOptions:[{...opt,currentValue:p.value}]})}};
+  assert.equal(await selectThought(c,'high'),'high');
+  await assert.rejects(selectThought(c,'max'),/no anunciado/);
+  await assert.rejects(selectThought({session:{}},'high'),/no anuncia/);
+  assert.equal(await selectThought({session:{}},undefined),undefined);
+  c.rpc.request=async()=>({});await assert.rejects(selectThought(c,'low'),/no confirmó/);
+  const entries=modelOptions({configOptions:[opt,{id:'model',type:'select',category:'model',currentValue:'a',options:[{value:'a'},{value:'b'}]}]});
+  assert.equal(piModels(entries)[0].reasoning,true);assert.equal(piModels(entries)[1].reasoning,false);
+});

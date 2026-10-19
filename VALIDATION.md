@@ -44,3 +44,7 @@
 ## 0.3.0
 
 17 pruebas con GENTLE_SOURCE, más TypeScript: permiso por carpeta compartido entre create_file/edit_file solo en el mismo turno; otras carpetas, comandos, otro turno, cancelación y symlinks no heredan autorización. UI compacta sin CodeContent. Windows real pendiente para esta versión. El usuario confirmó aprobación del worker en el padre y tarea completada con 0.2.0.
+
+## 0.4.0
+
+18 pruebas con normalizador Gentle y TypeScript. Se valida selección de esfuerzo anunciado, rechazo de nivel inexistente y respuesta sin confirmación. Esfuerzo y uso reales de Antigravity aún requieren salida de /ag inspect y /ag usage del equipo del usuario. No se afirma paridad completa de la tarjeta: totalTokens no se inventa.

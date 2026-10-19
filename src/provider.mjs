@@ -1,7 +1,7 @@
 import { usageSnapshot } from './metrics.mjs';
 import { randomUUID } from 'node:crypto';
 import { AntigravityClient } from './acp.mjs';
-import { selectModel } from './catalog.mjs';
+import { selectModel, selectThought } from './catalog.mjs';
 
 function textOf(message) {
   if (typeof message.content === 'string') return message.content;
@@ -52,6 +52,9 @@ export class RuntimeProvider {
         if (options.signal?.aborted) { abort(); throw new Error('Cancelled before initialization'); }
         if (!state.initialized) { await client.initialize(); await client.open(); state.initialized = messages.length === 0 ? false : true; }
         await selectModel(client, model.id);
+        const effort = await selectThought(client, options.reasoning);
+        if (typeof effort === 'string') { output.providerThinkingLevel = effort; metric.effort = effort; }
+        output.responseModel = model.id;
         const fresh = state.prefix.length === 0;
         const delta = messages.slice(state.prefix.length).filter(m => !(m.role === 'assistant' && m.provider === model.provider));
         let prompt = delta.map(m => `${m.role === 'user' ? 'USER' : 'ASSISTANT'}:\n${textOf(m)}`).join('\n\n');
@@ -81,6 +84,9 @@ export class RuntimeProvider {
           } catch (error) { callbackError = error; client.close(); }
         };
         const result = await client.prompt(prompt);
+        if (result.usage && typeof result.usage === 'object') {
+          metric.reportedUsage = Object.fromEntries(['inputTokens','outputTokens','totalTokens','thoughtTokens','cachedReadTokens','cachedWriteTokens'].filter(k => Number.isSafeInteger(result.usage[k]) && result.usage[k] >= 0).map(k => [k,result.usage[k]]));
+        }
         if (callbackError) throw callbackError;
         if (options.signal?.aborted || result.stopReason === 'cancelled') throw new Error('Antigravity turn cancelled');
         state.prefix = messages.map(signature);

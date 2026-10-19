@@ -97,7 +97,7 @@ export class AntigravityClient {
   async initialize() {
     this.info = await this.rpc.request('initialize', {
       protocolVersion: 1, clientCapabilities: {},
-      clientInfo: { name: 'antigravity-bridge', version: '0.3.0' }
+      clientInfo: { name: 'antigravity-bridge', version: '0.4.0' }
     });
     if (this.info.protocolVersion !== 1) { this.close(); throw new Error('Unsupported ACP protocol version'); }
     return this.info;
