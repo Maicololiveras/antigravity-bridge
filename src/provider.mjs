@@ -1,3 +1,5 @@
+import { usageSnapshot } from './metrics.mjs';
+import { randomUUID } from 'node:crypto';
 import { AntigravityClient } from './acp.mjs';
 import { selectModel } from './catalog.mjs';
 
@@ -7,9 +9,9 @@ function textOf(message) {
 }
 function signature(message) { return JSON.stringify([message.role, textOf(message)]); }
 export class RuntimeProvider {
-  constructor({ createStream, connection, onPermission, onActivity = (_update, _key) => {} }) {
+  constructor({ createStream, connection, onPermission, onActivity = (_update, _key) => {}, onMetrics = (_metric) => {} }) {
     this.createStream = createStream; this.connection = connection;
-    this.onPermission = onPermission; this.onActivity = onActivity; this.sessions = new Map();
+    this.onMetrics = onMetrics; this.onPermission = onPermission; this.onActivity = onActivity; this.sessions = new Map();
   }
   close() { for (const state of this.sessions.values()) state.client.close(); this.sessions.clear(); }
   stream(model, context, options = {}) {
@@ -18,6 +20,10 @@ export class RuntimeProvider {
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
       stopReason: 'pending', timestamp: Date.now() };
     void (async () => {
+      const metric = { id: randomUUID(), worker: `${process.pid}:${options.sessionId || 'principal'}`, model: model.id, startedAt: Date.now(), permissionMs: 0, status: 'ejecutando' };
+      let revision = 0;
+      const report = () => { metric.revision = ++revision; try { this.onMetrics({ ...metric }); } catch {} };
+      report();
       let state; let acquired = false; let abort;
       try {
         if (options.signal?.aborted) throw new Error('Cancelled before start');
@@ -31,11 +37,16 @@ export class RuntimeProvider {
         if (!state) {
           if (this.sessions.size >= 16) throw new Error('Runtime session limit reached; start a new Pi session');
           const client = new AntigravityClient({ ...this.connection(), onPermission: this.onPermission });
-          state = { client, prefix: [], locked: false, initialized: false };
+          state = { client, prefix: [], locked: false, initialized: false, costBaseline: 0, currency: undefined };
           this.sessions.set(key, state);
         }
         state.locked = true; acquired = true;
         const client = state.client;
+        client.onPermission = async (request, signal) => {
+          metric.status = 'esperando permiso'; metric.waitingAt = Date.now(); report();
+          try { return await this.onPermission?.({ ...request, worker: metric.worker, model: model.id, cwd: client.cwd }, signal); }
+          finally { metric.permissionMs += Date.now() - metric.waitingAt; delete metric.waitingAt; metric.status = 'ejecutando'; report(); }
+        };
         abort = () => { if (client.busy) client.cancel(); else client.close(); };
         options.signal?.addEventListener('abort', abort, { once: true });
         if (options.signal?.aborted) { abort(); throw new Error('Cancelled before initialization'); }
@@ -60,6 +71,7 @@ export class RuntimeProvider {
         client.onUpdate = update => {
           try {
             options.onProviderStreamEvent?.(update, model);
+            if (update.sessionUpdate === 'usage_update') { Object.assign(metric, usageSnapshot(update)); report(); }
             if (update.sessionUpdate === 'agent_message_chunk' && update.content?.type === 'text') {
               output.content[0].text += update.content.text;
               stream.push({ type: 'text_delta', contentIndex: 0, delta: update.content.text, partial: output });
@@ -72,16 +84,27 @@ export class RuntimeProvider {
         if (callbackError) throw callbackError;
         if (options.signal?.aborted || result.stopReason === 'cancelled') throw new Error('Antigravity turn cancelled');
         state.prefix = messages.map(signature);
+        // ACP usage_update cost is cumulative for this session; Pi/Gentle sums
+        // message costs. Only report a known USD delta, never repeat a total.
+        if (metric.currency === 'USD' && state.costBaseline !== undefined &&
+            (!state.currency || state.currency === 'USD') && metric.sessionCost >= state.costBaseline) {
+          output.usage.cost.total = metric.sessionCost - state.costBaseline;
+        }
+        state.costBaseline = metric.sessionCost;
+        state.currency = metric.currency;
+        metric.status = 'completado';
         output.stopReason = result.stopReason === 'max_tokens' ? 'length' : 'stop';
         stream.push({ type: 'text_end', contentIndex: 0, content: output.content[0].text, partial: output });
         stream.push({ type: 'done', reason: output.stopReason, message: output });
       } catch (error) {
+        metric.status = options.signal?.aborted ? 'cancelado' : 'error';
         // An uncertain turn must never be silently resent into the same runtime session.
         if (acquired) state?.client.close();
         output.stopReason = options.signal?.aborted ? 'aborted' : 'error';
         output.errorMessage = error.message;
         stream.push({ type: 'error', reason: output.stopReason, error: output });
       } finally {
+        metric.finishedAt = Date.now(); report();
         if (abort) options.signal?.removeEventListener('abort', abort);
         if (acquired) state.locked = false;
         stream.end();

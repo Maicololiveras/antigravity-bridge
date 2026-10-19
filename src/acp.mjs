@@ -85,10 +85,11 @@ export class AntigravityClient {
     this.rpc.on('notification', (method, params) => {
       if (method === 'session/update' && params?.sessionId === this.sessionId) this.onUpdate(params.update);
     });
+    this.rpc.on('closed', () => this.permissionController?.abort());
     this.rpc.handleRequest = async (method, params) => {
       if (method !== 'session/request_permission') throw Object.assign(new Error('Client capability not supported'), { code: -32601 });
       if (params.sessionId !== this.sessionId || this.cancelled || !this.busy) return { outcome: { outcome: 'cancelled' } };
-      const optionId = await this.onPermission(params);
+      const optionId = await this.onPermission(params, this.permissionController?.signal);
       if (this.cancelled || !params.options?.some(o => o.optionId === optionId)) return { outcome: { outcome: 'cancelled' } };
       return { outcome: { outcome: 'selected', optionId } };
     };
@@ -96,7 +97,7 @@ export class AntigravityClient {
   async initialize() {
     this.info = await this.rpc.request('initialize', {
       protocolVersion: 1, clientCapabilities: {},
-      clientInfo: { name: 'antigravity-bridge', version: '0.1.0' }
+      clientInfo: { name: 'antigravity-bridge', version: '0.2.0' }
     });
     if (this.info.protocolVersion !== 1) { this.close(); throw new Error('Unsupported ACP protocol version'); }
     return this.info;
@@ -122,13 +123,13 @@ export class AntigravityClient {
   async prompt(text) {
     if (this.busy) throw new Error('A turn is already running');
     if (!this.sessionId) throw new Error('Open a session first');
-    this.busy = true; this.cancelled = false;
+    this.busy = true; this.cancelled = false; this.permissionController = new AbortController();
     try { return await this.rpc.request('session/prompt', { sessionId: this.sessionId, prompt: [{ type: 'text', text }] }, this.timeout); }
-    finally { this.busy = false; clearTimeout(this.cancelTimer); }
+    finally { this.permissionController?.abort(); this.busy = false; clearTimeout(this.cancelTimer); }
   }
   cancel() {
     if (!this.busy || this.cancelled) return;
-    this.cancelled = true;
+    this.cancelled = true; this.permissionController?.abort();
     this.rpc.notify('session/cancel', { sessionId: this.sessionId });
     // Some implementations do not acknowledge cancellation. Terminate rather than leave a hidden turn running.
     this.cancelTimer = setTimeout(() => this.close(), 5000);
@@ -139,5 +140,5 @@ export class AntigravityClient {
     if (!this.session?.modes?.availableModes?.some(m => m.id === modeId)) throw new Error('Mode not advertised by runtime');
     return this.rpc.request('session/set_mode', { sessionId: this.sessionId, modeId });
   }
-  close() { this.cancelled = true; clearTimeout(this.cancelTimer); this.rpc.close(); }
+  close() { this.permissionController?.abort(); this.cancelled = true; clearTimeout(this.cancelTimer); this.rpc.close(); }
 }

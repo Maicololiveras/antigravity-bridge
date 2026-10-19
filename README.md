@@ -2,7 +2,7 @@
 
 Cliente experimental de Antigravity ACP para Pi y el selector de modelos de Gentle Shell.
 
-**Estado: 0.1.0, prototipo verificable con servidor ACP de prueba. No validado aún contra un binario real de Antigravity ni una cuenta Google.**
+**Estado: 0.2.0 experimental. El usuario comprobó login/modelos y permisos interactivos en Windows. Los permisos RPC y métricas se prueban con ACP simulado; falta validar el flujo completo con Gentle y Antigravity reales.**
 
 El proveedor `antigravity` publica los modelos que anuncia el runtime. Pi muestra la respuesta en streaming; Antigravity mantiene su conversación y ejecuta sus propias herramientas. El bridge no extrae tokens, no implementa OAuth de Google, no llama endpoints privados y no invoca `agy -p`.
 
@@ -10,7 +10,14 @@ El proveedor `antigravity` publica los modelos que anuncia el runtime. Pi muestr
 
 Requisitos: Node.js 22.19+, Pi de `@earendil-works/pi-coding-agent` 1.3.x, y un **servidor ACP oficial de Antigravity instalado por separado** compatible con ACP v1. La extensión también necesita `@earendil-works/pi-ai` (peer de Pi). Gentle Shell consultado: 4.3.0. Versiones anteriores no están verificadas.
 
-Descomprime el proyecto y, desde su carpeta:
+Instalación directa en Gentle Shell (su home es independiente de Pi por defecto):
+
+```powershell
+gentle-shell install git:github.com/Maicololiveras/antigravity-bridge
+```
+
+Para Pi independiente: `pi install git:github.com/Maicololiveras/antigravity-bridge`.
+Para desarrollo, desde el clon:
 
 ```powershell
 npm ci --ignore-scripts
@@ -55,6 +62,7 @@ El catálogo se guarda en `~/.pi/agent/antigravity-bridge/models.json` para pró
 | `/ag auth` | Pedir al runtime uno de sus métodos de autenticación |
 | `/ag models` | Descubrir y registrar los modelos ACP |
 | `/ag status` | Mostrar cantidad de modelos y estado básico |
+| `/ag usage` | Mostrar métricas recibidas en esta sesión |
 | `/ag reset` | Cerrar las conexiones mantenidas por el bridge |
 | `/model` | Elegir el modelo de la conversación de Pi |
 | `/gentle:models` | Elegir modelos en el enrutamiento de Gentle, si está instalado |
@@ -78,11 +86,11 @@ Cada sesión de Pi mantiene su runtime. Los turnos siguientes envían solamente 
 - La UI muestra texto en streaming, estado de herramientas y plan. No hay tarjetas nativas con diffs de Pi.
 - Autenticación real, disponibilidad por sistema operativo, consumo de suscripción y compatibilidad de la versión instalada de ACP requieren validación en el equipo del usuario.
 - ACP no entrega límites de tokens estandarizados: 32768/8192 son presupuestos del adaptador exigidos por el catálogo de Pi, **no especificaciones del modelo ni límites impuestos al runtime**.
-- Los campos de uso/costo se mantienen en cero porque no se miden. Cero no significa uso gratuito ni cuota ilimitada; consulta Antigravity para el consumo real.
+- Los tokens nativos permanecen en cero como compatibilidad de API cuando no hay consumo por turno verificable. El costo nativo recibe la diferencia USD entre totales ACP conocidos, sin sumar el acumulado varias veces. `/ag usage` muestra contexto y costo acumulado reportados mediante ACP `usage_update`; lo ausente aparece N/D. No se convierte contexto ocupado en tokens consumidos ni se estima el precio de una suscripción.
 - Historial ACP en memoria durante la ejecución. Después de reiniciar se crea una sesión y se reenvía el historial textual disponible, lo que puede consumir contexto. No se recuperan automáticamente sesiones por ID del disco.
 - Sin servidor de archivos ni terminal delegado al cliente: no se anuncian capacidades ACP que no se implementan. El agente debe ejecutar sus herramientas por sí mismo.
 - Se mantienen como máximo 16 conexiones por instancia. `/ag reset` las libera.
-- No tiene autoaprobación: se pregunta por permisos que envía ACP; sin interfaz se cancela la solicitud. Esto no restringe herramientas que el runtime ejecuta sin pedir permiso.
+- No tiene autoaprobación: los workers usan los diálogos RPC nativos. Gentle los remite al padre en modo `task`; en `background` los cancela por diseño. Sin host, cancelado o tras el timeout, no se aprueba. Esto no restringe herramientas que el runtime ejecuta sin pedir permiso. Las reglas de permisos y guardas de herramientas de Gentle aún no se aplican automáticamente a herramientas internas de Antigravity.
 - Una cancelación sin respuesta cierra el proceso ACP tras cinco segundos. No garantiza finalizar procesos descendientes que el runtime haya dejado independientes.
 - Los hooks HTTP `onResponse` no representan una respuesta HTTP real en este transporte; ver VALIDATION.md para el alcance del contrato.
 
@@ -121,3 +129,24 @@ Este proyecto no afirma autorización de Google para consumir planes personales 
 - [Antigravity](https://antigravity.google/docs/)
 
 MIT. Proyecto independiente; no afiliado a Google, Pi ni Gentle Shell.
+
+## Workers: contrato nativo Gentle (0.2.0)
+
+Actualiza desde PowerShell y reinicia Gentle y sus workers:
+
+```powershell
+gentle-shell update git:github.com/Maicololiveras/antigravity-bridge
+gentle-shell
+```
+
+Los permisos usan `ctx.ui.select` → Pi RPC `extension_ui_request` → Gentle `askUser` → `extension_ui_response`. No hay servidor ni canal paralelo. Se conserva identidad de proceso/sesión, modelo, carpeta e inputs en el título. Solo se ofrecen permisos de una vez anunciados por ACP. Cancelar el turno aborta el diálogo local; el cierre visual del diálogo del padre depende de la versión de Gentle.
+
+**Delegar en modo `task`** para operaciones que piden permiso. El código de Gentle (`AgentsRunner.answer`) cancela preguntas de `background` intencionalmente; este bridge respeta esa política. Si vuelve a fallar, comprueba el modo de la tarea y la versión de Gentle. La ausencia de terminal propia no implica ausencia de UI RPC. El diagnóstico anterior basado solo en `hasUI` no prueba la causa del bloqueo observado.
+
+Gentle ya mide duración del worker y consume `message_end.message.usage.totalTokens` y `usage.cost.total`. El bridge entrega costo por turno si ACP anuncia costo acumulado en USD y se conoce la base anterior. Tras un turno sin reporte, no atribuye el siguiente acumulado a un único turno. Otras monedas se conservan únicamente en `/ag usage`. El contexto ocupado (`used/size`) NO es consumo facturado y no se transforma en `totalTokens`. La semántica de `PromptResponse.usage` experimental varía entre runtimes; esta versión no inventa ese consumo ni estima precios de suscripción. Un cero en una tarjeta antigua no acredita costo gratis.
+
+`/ag usage` activa/desactiva un panel diagnóstico local (últimos ocho turnos, hasta 64 retenidos) con duración total, espera por permiso, contexto y costo de sesión ACP. No añade un segundo panel permanente al de Gentle. Los datos diagnósticos locales del worker no se retransmiten al padre; el padre usa las tarjetas nativas para duración/costo de workers. N/D significa que el runtime no reportó el dato.
+
+Los mensajes finales usan el contrato estándar Pi y no necesitan el despertar especial de `claude-bridge`, que Gentle limita explícitamente a ese proveedor. El prompt toma `context.systemPrompt` ya resuelto por Pi. Las herramientas internas ACP todavía no son herramientas del host: no se fabrican eventos `tool_execution_*` ni se afirma que las guardas de Gentle cubran su ejecución.
+
+Prueba después de actualizar: con un padre de otro proveedor y worker Antigravity, pide delegar **en modo task** crear un archivo nuevo, permite la operación y comprueba la tarjeta del worker. Repite rechazando otra solicitud. El flujo Windows/Gentle/Antigravity completo queda pendiente de validación local.

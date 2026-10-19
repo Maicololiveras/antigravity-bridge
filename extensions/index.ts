@@ -1,3 +1,5 @@
+import { requestPermission } from '../src/permissions.mjs';
+import { metricLine } from '../src/metrics.mjs';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
 import { readFileSync, mkdirSync, writeFileSync, renameSync } from 'node:fs';
@@ -20,14 +22,25 @@ export default function (pi: ExtensionAPI) {
     if (!Array.isArray(args) || args.some(a => typeof a !== 'string')) throw new Error('ANTIGRAVITY_ACP_ARGS debe ser un array JSON de strings');
     return { command: process.env.ANTIGRAVITY_ACP_BIN, args, cwd: ctx?.cwd || process.cwd() };
   }
-  async function permission(request: any) {
-    if (!ctx?.hasUI) return null;
-    const options = request.options.filter((o: any) => o.kind === 'allow_once' || o.kind === 'reject_once');
-    const labels = options.map((o: any, i: number) => `${i + 1}. ${clean(o.name)}`);
-    const choice = await ctx.ui.select(`Antigravity: ${clean(request.toolCall?.title || 'Permiso')}`, labels);
-    return options[labels.indexOf(choice)]?.optionId ?? null;
+  let refresh: ReturnType<typeof setInterval> | undefined;
+  const child = process.env.GENTLE_PI_AGENTS_CHILD === '1';
+  const metrics = new Map<string, any>();
+  let showMetrics = false;
+  const renderMetrics = () => {
+    if (showMetrics && ctx?.hasUI && !child) ctx.ui.setWidget('antigravity-metrics', [...metrics.values()].slice(-8).map(m => clean(metricLine(m))));
+  };
+  function receiveMetric(m: any) {
+    if (!m || typeof m.id !== 'string' || !Number.isFinite(m.startedAt)) return;
+    if ((metrics.get(m.id)?.revision || 0) >= m.revision) return;
+    metrics.set(m.id, m);
+    if (metrics.size > 64) metrics.delete(metrics.keys().next().value);
+    renderMetrics();
   }
-  const provider = new RuntimeProvider({ createStream: createAssistantMessageEventStream, connection, onPermission: permission,
+  async function permission(request: any, signal?: AbortSignal) {
+    return requestPermission(ctx, request, signal);
+  }
+  function reportMetric(m: any) { receiveMetric(m); }
+  const provider = new RuntimeProvider({ createStream: createAssistantMessageEventStream, connection, onPermission: permission, onMetrics: reportMetric,
     onActivity: (update: any) => {
       if (update.sessionUpdate === 'plan') ctx?.ui.setWidget('antigravity-plan', (update.entries || []).map((e: any) => `${clean(e.status)} · ${clean(e.content)}`));
       else ctx?.ui.setStatus('antigravity-bridge', `Antigravity · ${clean(update.title || update.toolCallId)} · ${clean(update.status)}`);
@@ -48,10 +61,11 @@ export default function (pi: ExtensionAPI) {
     try { await admin.initialize(); return admin; } catch (error) { admin.close(); admin = undefined; throw error; }
   }
   pi.registerCommand('ag', {
-    description: 'Antigravity: auth, models, status, reset',
+    description: 'Antigravity: auth, models, status, usage, reset',
     handler: async (args, context) => {
       ctx = context;
       try {
+        if (args.trim() === 'usage') { showMetrics = !showMetrics; if (!showMetrics) ctx.ui.setWidget('antigravity-metrics', undefined); renderMetrics(); ctx.ui.notify(metrics.size ? [...metrics.values()].map(m => clean(metricLine(m))).join('\n') : 'Sin métricas en esta sesión. N/D significa no reportado por ACP.', 'info'); return; }
         if (!ctx.isIdle()) throw new Error('Espera a que termine el turno o cancélalo con Esc');
         if (args.trim() === 'reset') { provider.close(); admin?.close(); admin = undefined; ctx.ui.notify('Sesiones del bridge cerradas.', 'info'); return; }
         if (args.trim() === 'auth') {
@@ -74,13 +88,18 @@ export default function (pi: ExtensionAPI) {
           ctx.ui.notify(`${entries.length} modelos anunciados por ACP. Abre /model o /gentle:models.`, 'info');
           return;
         }
-        ctx.ui.notify(`Antigravity bridge · ${entries.length} modelos en catálogo. /ag auth · /ag models · /ag reset. Cuota/tokens: no medidos.`, 'info');
+        ctx.ui.notify(`Antigravity bridge · ${entries.length} modelos en catálogo. /ag auth · /ag models · /ag reset. Permisos workers: RPC nativo Gentle (task); background cancela. /ag usage: duración, contexto y costo reportado.`, 'info');
       } catch (error: any) { ctx.ui.notify(clean(error.message), 'error'); }
     }
   });
-  pi.on('session_start', (_event, context) => { provider.close(); admin?.close(); admin = undefined; ctx = context; });
+  pi.on('session_start', async (_event, context) => {
+    provider.close(); admin?.close(); admin = undefined; ctx = context;
+    if (ctx.hasUI && !child && !refresh) { refresh = setInterval(renderMetrics, 1000); refresh.unref(); }
+  });
   pi.on('before_agent_start', (_event, context) => { ctx = context; });
   pi.on('agent_end', () => { ctx?.ui.setWidget('antigravity-plan', undefined); ctx?.ui.setStatus('antigravity-bridge', undefined); });
   pi.on('session_tree', () => provider.close());
-  pi.on('session_shutdown', () => { provider.close(); admin?.close(); });
+  pi.on('session_shutdown', () => {
+    provider.close(); admin?.close(); clearInterval(refresh);
+  });
 }

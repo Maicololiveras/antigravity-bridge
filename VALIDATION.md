@@ -35,3 +35,8 @@
 6. Abrir `/gentle:models`, seleccionar `antigravity/<id>` y verificar que el proceso que recibe el rol también carga la extensión.
 7. Probar Esc y nueva sesión; comprobar que no continúa un turno oculto.
 8. Revisar el uso en Antigravity: este bridge no mide cuota ni tokens.
+
+
+## 0.2.0: contrato nativo Gentle
+
+16 tests y TypeScript pasan (incluyendo el normalizador real de Gentle con `GENTLE_SOURCE=/ruta/al/clon/gentle-shell npm test`; sin esa variable la prueba opcional se omite): proveedor registrado en Pi real, selección RPC headless, cancelación y costo USD por turno sin duplicación del acumulado. Antigravity se simula; no se ejecutó Windows ni Gentle completo. Código Gentle 4.3.0 consultado en commit b274ba40aa433c4afc9a6c63292100cc7000644e: `lib/agents-protocol.ts` normaliza message_end.usage; `lib/agents-runner.ts` reenvía diálogos solo para task; `extensions/gentle-agents.ts` answerThroughUi reenvía select al padre. El usuario sí comprobó permisos y creación/lectura en el padre con 0.1.0. No se afirma que su problema fuera falta de hasUI: background es otra causa concreta y deliberada.

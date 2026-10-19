@@ -20,6 +20,7 @@ createInterface({ input: process.stdin }).on('line', line => {
       active = m.id;
       return send({ id: 'permission', method: 'session/request_permission', params: { sessionId: 'test-session', toolCall: { title: 'Test operation' }, options: [{ optionId: 'yes', kind: 'allow_once', name: 'Allow once' }, { optionId: 'no', kind: 'reject_once', name: 'Reject' }] } });
     }
+    if (text.includes('METRICS')) update({ sessionUpdate: 'usage_update', used: 120, size: 4096, cost: { amount: 0.03, currency: 'USD' } });
     update({ sessionUpdate: 'tool_call', toolCallId: 'read-1', title: 'Read test', status: 'completed' });
     for (const token of [`${model} #${turn}: `, text]) update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: token } });
     return reply({ stopReason: 'end_turn' });

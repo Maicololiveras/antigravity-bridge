@@ -1,0 +1,32 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { requestPermission } from '../src/permissions.mjs';
+import { usageSnapshot, metricLine } from '../src/metrics.mjs';
+import { RuntimeProvider } from '../src/provider.mjs';
+import { connection, createStream } from './support.mjs';
+const request = {worker:'worker-1', model:'gemini-test', toolCall:{title:'Create file'},options:[{optionId:'yes',name:'Allow',kind:'allow_once'},{optionId:'no',name:'Deny',kind:'reject_once'}]};
+test('headless RPC delegates select to host, retaining labels and cancellation', async () => {
+  let seen;
+  const c = new AbortController();
+  const ctx = {hasUI:false,mode:'rpc',ui:{select:async (...args) => {seen=args;return args[1][0];}}};
+  assert.equal(await requestPermission(ctx,request,c.signal),'yes');
+  assert.match(seen[0],/worker-1/); assert.equal(seen[2].signal,c.signal);
+  ctx.ui.select=async () => undefined;
+  assert.equal(await requestPermission(ctx,request,c.signal),null);
+  c.abort(); ctx.ui.select=async () => {throw Error('must not call');};
+  assert.equal(await requestPermission(ctx,request,c.signal),null);
+  assert.equal(await requestPermission({hasUI:false,mode:'text'},request),null);
+});
+test('ACP cost maps to native Pi per-turn USD cost without double counting', async t => {
+  const metrics=[];
+  const p=new RuntimeProvider({connection,createStream,onMetrics:m=>metrics.push(m)});t.after(()=>p.close());
+  const model={id:'gemini-test',provider:'antigravity',api:'antigravity-acp'};
+  const user={role:'user',content:'METRICS'};
+  const a=await p.stream(model,{messages:[user]}).result();
+  assert.equal(a.usage.cost.total,.03); assert.equal(a.usage.totalTokens,0);
+  const b=await p.stream(model,{messages:[user,a,{role:'user',content:'METRICS again'}]}).result();
+  assert.equal(b.usage.cost.total,0);
+  assert.equal(metrics.at(-1).contextUsed,120); assert.equal(metrics.at(-1).status,'completado');
+  assert.match(metricLine(metrics.at(-1)),/costo sesión USD 0.03/);
+  assert.deepEqual(usageSnapshot({sessionUpdate:'usage_update',used:null,size:10,cost:{amount:-1,currency:'USD'}}),{});
+});
