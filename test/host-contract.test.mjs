@@ -10,7 +10,7 @@ test('headless RPC delegates select to host, retaining labels and cancellation',
   const c = new AbortController();
   const ctx = {hasUI:false,mode:'rpc',ui:{select:async (...args) => {seen=args;return args[1][0];}}};
   assert.equal(await requestPermission(ctx,request,c.signal),'yes');
-  assert.match(seen[0],/worker-1/); assert.equal(seen[2].signal,c.signal);
+  assert.match(seen[0],/gemini-test/); assert.equal(seen[2].signal,c.signal);
   ctx.ui.select=async () => undefined;
   assert.equal(await requestPermission(ctx,request,c.signal),null);
   c.abort(); ctx.ui.select=async () => {throw Error('must not call');};
@@ -29,4 +29,25 @@ test('ACP cost maps to native Pi per-turn USD cost without double counting', asy
   assert.equal(metrics.at(-1).contextUsed,120); assert.equal(metrics.at(-1).status,'completado');
   assert.match(metricLine(metrics.at(-1)),/costo sesión USD 0.03/);
   assert.deepEqual(usageSnapshot({sessionUpdate:'usage_update',used:null,size:10,cost:{amount:-1,currency:'USD'}}),{});
+});
+
+test('folder approval is scoped to one prompt and excludes commands and other folders', async t => {
+  const { mkdtempSync, mkdirSync, rmSync, symlinkSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os'); const {join} = await import('node:path');
+  const root=mkdtempSync(join(tmpdir(),'ag-permissions-')); t.after(()=>rmSync(root,{recursive:true,force:true}));
+  mkdirSync(join(root,'project')); mkdirSync(join(root,'other'));
+  const req=target=>({...request, toolCall:{title:'Run create_file?',kind:'edit',rawInput:{TargetFile:target,CodeContent:'hello'}}});
+  const c=new AbortController(); let calls=0;
+  const ctx={hasUI:true,ui:{select:async(title,options)=>{calls++; assert.ok(!title.includes('CodeContent')); return options.includes('Autorizar carpeta') ? 'Autorizar carpeta' : options[1];}}};
+  assert.equal(await requestPermission(ctx,req(join(root,'project','a.txt')),c.signal),'yes'); assert.equal(calls,2);
+  ctx.ui.select=async()=>{calls++;return 'Rechazar';};
+  const edit=req(join(root,'project','a.txt')); edit.toolCall.title='Run edit_file?';
+  assert.equal(await requestPermission(ctx,edit,c.signal),'yes'); assert.equal(calls,2);
+  assert.equal(await requestPermission(ctx,req(join(root,'project','nested','b.txt')),c.signal),'yes');assert.equal(calls,2);
+  assert.equal(await requestPermission(ctx,req(join(root,'other','c.txt')),c.signal),'no');
+  assert.equal(await requestPermission(ctx,{...request,toolCall:{title:'Run run_command?',rawInput:{CommandLine:'echo hi'}}},c.signal),'no');
+  assert.equal(await requestPermission(ctx,req(join(root,'project','a.txt')),new AbortController().signal),'no');
+  symlinkSync(join(root,'other'),join(root,'project','link'),'junction');
+  assert.equal(await requestPermission(ctx,req(join(root,'project','link','d.txt')),c.signal),'no');
+  c.abort(); assert.equal(await requestPermission(ctx,req(join(root,'project','e.txt')),c.signal),null);
 });

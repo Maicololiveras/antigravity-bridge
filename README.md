@@ -2,7 +2,7 @@
 
 Cliente experimental de Antigravity ACP para Pi y el selector de modelos de Gentle Shell.
 
-**Estado: 0.2.0 experimental. El usuario comprobó login/modelos y permisos interactivos en Windows. Los permisos RPC y métricas se prueban con ACP simulado; falta validar el flujo completo con Gentle y Antigravity reales.**
+**Estado: 0.3.0 experimental. El usuario comprobó login/modelos y permisos interactivos en Windows. Los permisos RPC y métricas se prueban con ACP simulado; falta validar el flujo completo con Gentle y Antigravity reales.**
 
 El proveedor `antigravity` publica los modelos que anuncia el runtime. Pi muestra la respuesta en streaming; Antigravity mantiene su conversación y ejecuta sus propias herramientas. El bridge no extrae tokens, no implementa OAuth de Google, no llama endpoints privados y no invoca `agy -p`.
 
@@ -150,3 +150,9 @@ Gentle ya mide duración del worker y consume `message_end.message.usage.totalTo
 Los mensajes finales usan el contrato estándar Pi y no necesitan el despertar especial de `claude-bridge`, que Gentle limita explícitamente a ese proveedor. El prompt toma `context.systemPrompt` ya resuelto por Pi. Las herramientas internas ACP todavía no son herramientas del host: no se fabrican eventos `tool_execution_*` ni se afirma que las guardas de Gentle cubran su ejecución.
 
 Prueba después de actualizar: con un padre de otro proveedor y worker Antigravity, pide delegar **en modo task** crear un archivo nuevo, permite la operación y comprueba la tarjeta del worker. Repite rechazando otra solicitud. El flujo Windows/Gentle/Antigravity completo queda pendiente de validación local.
+
+## Permisos compactos y por carpeta (0.3.0)
+
+El aviso inicial muestra operación, archivo, carpeta y modelo. El JSON/código solo aparece al elegir **Ver detalles** (vista limitada a 8000 caracteres). Para `create_file` y `edit_file` con `TargetFile` absoluto verificable se ofrece **Permitir crear y editar en esta carpeta durante esta tarea**, seguido de confirmación de la ruta exacta. Se incluyen subcarpetas. La decisión dura un turno ACP del worker y se elimina al terminar, cancelar o cerrar; no se comparte con otros workers o turnos. Las siguientes creaciones/ediciones reconocidas en esa carpeta se autorizan sin volver a preguntar. Comandos, borrados, otras carpetas y formatos desconocidos siguen preguntando.
+
+Se comprueban las rutas y se excluyen enlaces simbólicos/junctions, rutas ambiguas y ubicaciones contradictorias. No constituye un sandbox del sistema operativo ni cubre herramientas que Antigravity ejecute sin pedir permiso. Gentle conserva su transporte RPC y política task/background. Actualiza y reinicia Gentle para cargar esta versión; un worker ya iniciado sigue con su código anterior.
